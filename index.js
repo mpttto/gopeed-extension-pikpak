@@ -274,6 +274,7 @@ function PikPakClient(settings) {
     storageSet("device_id", this.deviceId);
   }
   this.captchaToken = "";
+  this.captchaAction = "";
   this.passCodeToken = "";
   this.accessToken = "";
   this.refreshToken = "";
@@ -337,6 +338,7 @@ PikPakClient.prototype.refreshCaptcha = function (action, extraMeta) {
       );
     }
     self.captchaToken = r.data.captcha_token;
+    self.captchaAction = action;
     return r.data;
   });
 };
@@ -368,6 +370,7 @@ PikPakClient.prototype._saveToken = function (data) {
   this.userId = data.sub || "";
   // 匿名阶段拿的 captcha_token 不带 user_id，登录后重新取
   this.captchaToken = "";
+  this.captchaAction = "";
   storageSet("access_token", this.accessToken);
   storageSet("refresh_token", this.refreshToken);
   storageSet("user_id", this.userId);
@@ -380,6 +383,8 @@ PikPakClient.prototype._clearToken = function () {
   this.accessToken = "";
   this.refreshToken = "";
   this.userId = "";
+  this.captchaToken = "";
+  this.captchaAction = "";
   storageSet("access_token", "");
   storageSet("refresh_token", "");
   storageSet("user_id", "");
@@ -513,7 +518,9 @@ PikPakClient.prototype._request = function (path, method, query, body) {
   var attempt = 0;
   var doCall = function () {
     attempt++;
-    var ensure = self.captchaToken
+    // CAPTCHA tokens are scoped to the request action. Never reuse a token
+    // obtained for share/detail or share/restore when requesting a file URL.
+    var ensure = self.captchaToken && self.captchaAction === action
       ? Promise.resolve()
       : self.refreshCaptcha(action);
     return ensure
@@ -661,11 +668,11 @@ PikPakClient.prototype.restore = function (shareId, fileIds, ancestorIds) {
 };
 
 PikPakClient.prototype.getOwnFile = function (fileId) {
-  return this._request("/drive/v1/files/" + fileId, "GET", {
-    _magic: "2021",
-    usage: "FETCH",
-    thumbnail_size: "SIZE_LARGE",
-  });
+  // PikPak requires a CAPTCHA token for this exact GET action when generating
+  // web_content_link. _request refreshes action-scoped tokens as needed.
+  // Avoid the legacy _magic/usage/thumbnail query parameters here: on current
+  // PikPak APIs they can yield a web_content_link that resolves to HTTP 404.
+  return this._request("/drive/v1/files/" + fileId, "GET");
 };
 
 // 转存过的文件记在 storage 里，重复解析同一分享时直接复用，不再占用每日转存次数
